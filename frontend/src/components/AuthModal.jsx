@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Shield, Mail, Lock, User, ArrowRight, Activity } from "lucide-react";
-import api from "../services/api";
+import api, { API_BASE_URL } from "../services/api";
 
 const AuthModal = ({
   onLoginSuccess,

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 from urllib.parse import urlencode
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, Header
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, Header, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -125,6 +125,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+<<<<<<< HEAD
 @app.get("/health")
 async def health_check(request: Request):
     """Public health check endpoint useful for debugging production CORS/URLs"""
@@ -155,6 +156,11 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": f"Internal Server Error: {str(exc)}", "type": str(type(exc))}
     )
+=======
+@app.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    return Response(status_code=200)
+>>>>>>> 30d1d93a1682553db2d4977c8a68fde5a0baf704
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 
@@ -1144,13 +1150,15 @@ if __name__ == "__main__":
     import uvicorn
 
     host = "0.0.0.0"
-    port = 8000
+    port = int(os.getenv("PORT", "8000"))
+    is_render = os.getenv("RENDER", "").lower() == "true"
 
     # Avoid Windows bind errors when a previous backend instance is already running.
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.5)
-        if sock.connect_ex(("127.0.0.1", port)) == 0:
-            print(f"Rakshak backend already running on http://127.0.0.1:{port}")
-            sys.exit(0)
+    if not is_render:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            if sock.connect_ex(("127.0.0.1", port)) == 0:
+                print(f"Rakshak backend already running on http://127.0.0.1:{port}")
+                sys.exit(0)
 
     uvicorn.run("main:app", host=host, port=port, reload=False)
