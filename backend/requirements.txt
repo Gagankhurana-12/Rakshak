@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+sqlmodel
+asyncpg
+pinecone
+sentence-transformers
+pymupdf
+pytesseract
+groq
+python-multipart
+pydantic-settings
+numpy
+torch # for sentence-transformers
+tf-keras
+faiss-cpu
