@@ -116,13 +116,13 @@ def index_dataset():
                 break
 
             if len(vectors) >= BATCH_SIZE:
-                index.upsert(vectors=vectors)
+                index.upsert(vectors=vectors, namespace="default")
                 vectors = []
         except Exception as e:
             print(f"Error processing {disease}: {e}")
 
     if vectors:
-        index.upsert(vectors=vectors)
+        index.upsert(vectors=vectors, namespace="default")
         
     print(f"Finished! Indexed {count} diseases successfully.")
 

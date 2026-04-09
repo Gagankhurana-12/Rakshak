@@ -14,8 +14,10 @@ Most health apps show you graphs; Rakshak AI tells you what they *mean*. By inte
 - **LLM**: Groq (Llama 3.3 70B) for near-instant "Chief Medical Officer" reasoning.
 - **Biometrics**: Google Fit API (REST).
 - **Hybrid Memory**:
-  - **Pinecone (Cloud)**: Global medical knowledge base (246k+ disease mappings).
-  - **FAISS (Local)**: Private, encrypted user medical document storage.
+   - **Pinecone (Cloud, Single Index + Namespaces)**:
+      - `default`: Global medical knowledge base (disease mappings).
+      - `user_docs`: Private user medical document chunks.
+      - `user_vitals`: Weekly/daily vitals history summaries.
 - **Database**: PostgreSQL (Structured User Data).
 - **Vision**: Tesseract OCR (Medical Report Processing).
 - **Frontend**: React (Vite) with a premium health-tech aesthetic.
@@ -31,13 +33,13 @@ Most health apps show you graphs; Rakshak AI tells you what they *mean*. By inte
 
 ### 2. The Medical Memory (Document Ingestion)
 - **Vision**: OCR scans images/PDFs of your medical reports.
-- **Privacy**: Text is chunked and stored in a **Local FAISS Vector Index**. Your private history never leaves the local environment for storage.
+- **Privacy**: Text is chunked and stored in Pinecone `user_docs` namespace, filtered by `user_id` during retrieval.
 
 ### 3. The CMO Diagnostic (AI Analysis)
 When you ask a question, Rakshak performs a **Triple-Context Search**:
 1.  **Context A**: Current Vitals (Heart Rate, Steps, Sleep trends).
-2.  **Context B**: Your Medical History (Searching FAISS for past conditions).
-3.  **Context C**: Global Facts (Searching Pinecone for scientific disease signatures).
+2.  **Context B**: Your Medical History (Searching Pinecone `user_docs` namespace).
+3.  **Context C**: Global Facts (Searching Pinecone `default` namespace for disease signatures).
 
 **The Result**: The "Chief Medical Officer" prompt correlates all three to give a differential diagnosis, not just a generic suggestion.
 
@@ -72,4 +74,4 @@ python scripts/index_diseases.py
 ---
 
 ## 🏆 Hackathon Spotlight
-Rakshak AI solves the **"Generic LLM Problem"** in healthcare by giving the model "eyes" into the user's actual body (Google Fit) and "memory" of their past tests (FAISS). It represents a stable, production-ready implementation of AI-driven personalized medicine.
+Rakshak AI solves the **"Generic LLM Problem"** in healthcare by giving the model "eyes" into the user's actual body (Google Fit) and "memory" of their past tests (Pinecone user namespaces). It represents a stable, production-ready implementation of AI-driven personalized medicine.

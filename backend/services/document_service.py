@@ -52,14 +52,12 @@ class DocumentService:
 
         chunks = DocumentService.chunk_text(text, max_tokens=500)
         
-        # Store in Pinecone when available; keep upload working even if vector search is offline.
-        vector_store = "online"
-        from rag.faiss_client import faiss_service
-        vector_store = "faiss_local"
+        # Store in Pinecone shared index under user_docs namespace.
+        vector_store = "pinecone_namespace:user_docs"
         try:
-            await faiss_service.add_documents(user_id, "user_docs", chunks)
+            await rag_service.upsert_doc_chunks(user_id, file.filename, chunks)
         except Exception as e:
-            print(f"❌ FAISS Upsert Failed: {e}")
+            print(f"❌ Pinecone Upsert Failed: {e}")
             vector_store = "error"
         
         return {

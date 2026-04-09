@@ -14,6 +14,7 @@ const AuthModal = ({
     password: "",
     name: "",
   });
+  
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 

@@ -4,6 +4,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import Session
 from db.models import User, VitalsDailySummary, UserVitals
 from services.google_fit_service import GoogleFitService
+from rag.pinecone_client import rag_service
 
 class SyncService:
     @staticmethod
@@ -157,8 +158,24 @@ class SyncService:
                     calories=s.total_calories,
                     distance=s.total_distance_km,
                 ))
-        
+
         await db_session.commit()
+
+        # Store per-day vitals summaries for semantic retrieval in Pinecone user_vitals namespace.
+        for s in summaries.values():
+            date_str = s.date.strftime("%Y-%m-%d")
+            summary_text = (
+                f"Vitals for {date_str}: "
+                f"steps={int(s.avg_steps or 0)}, "
+                f"avg_heart_rate={round(s.avg_hr, 2) if s.avg_hr is not None else 'N/A'} bpm, "
+                f"sleep_hours={round(s.avg_sleep_hours, 2) if s.avg_sleep_hours is not None else 'N/A'}, "
+                f"calories={round(s.total_calories, 2) if s.total_calories is not None else 'N/A'}."
+            )
+            try:
+                await rag_service.upsert_vitals_summary(user.id, summary_text, date_str)
+            except Exception as exc:
+                print(f"⚠️ Pinecone vitals upsert failed for {date_str}: {exc}")
+
         return len(summaries)
 
 sync_service = SyncService()

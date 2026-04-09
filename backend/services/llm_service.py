@@ -2,10 +2,11 @@ try:
     from groq import AsyncGroq
 except Exception:
     AsyncGroq = None
+
 from config import settings
 import asyncio
 import json
-import re
+
 
 class LLMService:
     def __init__(self):
@@ -26,7 +27,6 @@ class LLMService:
         return self._client
 
     async def _call_model(self, prompt: str, system_prompt: str, timeout: float = 12.0) -> dict | None:
-        last_error = None
         for model_name in dict.fromkeys(self.model_candidates):
             try:
                 completion = await asyncio.wait_for(
@@ -38,23 +38,56 @@ class LLMService:
                         ],
                         response_format={"type": "json_object"},
                     ),
-                    timeout=timeout
+                    timeout=timeout,
                 )
                 return json.loads(completion.choices[0].message.content)
             except Exception as exc:
-                last_error = exc
                 print(f"⚠️ LLM Call error with {model_name}: {exc}")
                 continue
 
         return None
 
-    async def analyze(self, query: str, vitals_context: str, rag_context: dict) -> dict:
+    async def analyze(self, query: str, vitals_context: str, rag_context: dict, mode: str = "personalized") -> dict:
         disease_context = "\n".join(rag_context.get("disease_context", []))[:1000]
         user_docs_context = "\n".join(rag_context.get("user_docs_context", []))[:1000]
         vitals_history_context = "\n".join(rag_context.get("vitals_history_context", []))[:800]
-        
-        system_prompt = """
-You are the Rakshak Chief Medical Officer AI, an elite diagnostic system. 
+
+        if mode == "general":
+            system_prompt = """
+You are Rakshak Medical Knowledge Assistant.
+For definition/explainer questions, answer only from SCIENTIFIC REFERENCE DATA.
+Do NOT use personal medical history or vitals to infer patient-specific diagnosis.
+Keep output educational, concise, and medically accurate.
+
+YOU MUST RETURN JSON ONLY.
+"""
+
+            prompt = f"""
+[MEDICAL KNOWLEDGE QUERY]
+QUERY: {query}
+SCIENTIFIC REFERENCE DATA: {disease_context}
+
+[OUTPUT REQUIREMENTS]
+1. 'possible_conditions': should include the queried condition first when identifiable.
+2. 'vitals_correlation': Explain that this is a general explanation, not personalized inference.
+3. 'urgency': usually 'low' for educational queries unless strong emergency signs are explicitly in query.
+4. 'recommendations': include education-focused next steps.
+
+Strict JSON format:
+{{
+  "possible_conditions": [
+    {{ "name": "", "confidence": "low|medium|high", "reason": "" }}
+  ],
+  "confidence": "low|medium|high",
+  "vitals_correlation": "",
+  "urgency": "low|medium|high",
+  "recommendations": [],
+  "disclaimer": "Educational guidance only - Not a final diagnosis."
+}}
+"""
+        else:
+            system_prompt = """
+You are the Rakshak Chief Medical Officer AI, an elite diagnostic system.
 Your goal is to provide high-precision, clinical-grade analysis by correlating biometric data with medical history.
 
 DIAGNOSTIC GUIDELINES:
@@ -66,7 +99,7 @@ DIAGNOSTIC GUIDELINES:
 YOU MUST RETURN JSON ONLY.
 """
 
-        prompt = f"""
+            prompt = f"""
 [PATIENT DATA CASE]
 QUERY: {query}
 CURRENT BIOMETRICS: {vitals_context}
@@ -97,18 +130,43 @@ Strict JSON format:
             raw = await self._call_model(prompt, system_prompt)
         except Exception:
             raw = None
-            
+
         if not raw:
-            # Simple fallback if LLM is down
+            if mode == "general":
+                return {
+                    "possible_conditions": [
+                        {
+                            "name": "General Medical Explanation",
+                            "confidence": "low",
+                            "reason": "The explanation engine is temporarily unavailable.",
+                        }
+                    ],
+                    "confidence": "low",
+                    "vitals_correlation": "This was a general query; personalized vitals were not required.",
+                    "urgency": "low",
+                    "recommendations": [
+                        "Please try the question again in a moment.",
+                        "Use specific wording like: What is asthma?",
+                    ],
+                    "disclaimer": "Educational guidance only - Not a final diagnosis.",
+                }
+
             return {
-                "possible_conditions": [{"name": "Analysis Timeout", "confidence": "low", "reason": "The system could not reach the diagnostic engine."}],
+                "possible_conditions": [
+                    {
+                        "name": "Analysis Timeout",
+                        "confidence": "low",
+                        "reason": "The system could not reach the diagnostic engine.",
+                    }
+                ],
                 "confidence": "low",
                 "vitals_correlation": "Biometric analysis was interrupted.",
                 "urgency": "medium",
                 "recommendations": ["Please try your query again.", "Check your internet connection."],
-                "disclaimer": "System busy."
+                "disclaimer": "System busy.",
             }
 
         return raw
+
 
 llm_service = LLMService()

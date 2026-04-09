@@ -8,6 +8,10 @@ from config import settings
 from utils.embeddings import embedder
 import time
 
+DISEASE_NAMESPACE = "default"
+USER_DOCS_NAMESPACE = "user_docs"
+USER_VITALS_NAMESPACE = "user_vitals"
+
 class RakshakRAG:
     def __init__(self, api_key: str):
         self._pc = None
@@ -44,32 +48,31 @@ class RakshakRAG:
         if not self.pc:
             return
 
-        index_specs = [
-            settings.PINECONE_INDEX_DISEASES,
-            settings.PINECONE_INDEX_USER_DOCS,
-            settings.PINECONE_INDEX_USER_VITALS
-        ]
-        
+        # Use one shared index and separate namespaces for each data domain.
+        index_specs = [settings.PINECONE_INDEX_DISEASES]
+
         existing = [idx.name for idx in self.pc.list_indexes()]
-        
+
         for idx_name in index_specs:
             if idx_name not in existing:
                 self.pc.create_index(
                     name=idx_name,
-                    dimension=384, # all-MiniLM-L6-v2 dimension is 384
+                    dimension=384,
                     metric='cosine',
-                    spec=ServerlessSpec(cloud='aws', region='us-east-1') # Adjust region as per need
+                    spec=ServerlessSpec(cloud='aws', region='us-east-1')
                 )
-    
-    def get_index(self, name: str):
+
+    def get_index(self):
         if not self.pc:
             return None
-        return self.pc.Index(name)
+        return self.pc.Index(settings.PINECONE_INDEX_DISEASES)
 
     async def upsert_doc_chunks(self, user_id: str, doc_name: str, chunks: list[str]):
-        """Store document chunks for a specific user into PINECONE_INDEX_USER_DOCS."""
-        index = self.get_index(settings.PINECONE_INDEX_USER_DOCS)
-        
+        """Store user medical history chunks in the shared index under user_docs namespace."""
+        index = self.get_index()
+        if not index:
+            raise RuntimeError("Pinecone index unavailable")
+
         vectors = []
         for i, chunk in enumerate(chunks):
             embedding = await embedder.encode(chunk)
@@ -83,17 +86,31 @@ class RakshakRAG:
                     "upload_date": str(time.time())
                 }
             })
-        
-        index.upsert(vectors=vectors, namespace=user_id)
-        print(f"✅ Successfully upserted {len(vectors)} chunks to Pinecone index '{settings.PINECONE_INDEX_USER_DOCS}' (Namespace: {user_id})")
+
+        index.upsert(vectors=vectors, namespace=USER_DOCS_NAMESPACE)
+        print(
+            f"✅ Upserted {len(vectors)} document chunks to '{settings.PINECONE_INDEX_DISEASES}' "
+            f"(namespace: {USER_DOCS_NAMESPACE}, user: {user_id})"
+        )
 
     async def upsert_vitals_summary(self, user_id: str, summary_text: str, date_str: str):
-        """Store a natural language vitals summary for searching history."""
-        from rag.faiss_client import faiss_service
-        try:
-            await faiss_service.add_documents(user_id, "vitals_history", [summary_text])
-        except Exception as e:
-            print(f"⚠️ FAISS Vitals Backup Failed: {e}")
+        """Store weekly/daily vitals summary in the shared index under user_vitals namespace."""
+        index = self.get_index()
+        if not index:
+            raise RuntimeError("Pinecone index unavailable")
+
+        embedding = await embedder.encode(summary_text)
+        vector = {
+            "id": f"vitals_{user_id}_{date_str}",
+            "values": embedding,
+            "metadata": {
+                "user_id": user_id,
+                "date": date_str,
+                "text": summary_text,
+                "type": "vitals_history",
+            },
+        }
+        index.upsert(vectors=[vector], namespace=USER_VITALS_NAMESPACE)
 
     async def retrieve_context(
         self,
@@ -111,45 +128,47 @@ class RakshakRAG:
             }
 
         query_vec = await embedder.encode(query)
-        
+
         # Run Pinecone queries in parallel using threads (since index.query is blocking)
-        async def _query_index(idx_name, namespace=None, top_k=5):
-            index = self.get_index(idx_name)
+        async def _query_index(namespace=None, top_k=5, filter_payload=None):
+            index = self.get_index()
             if not index:
                 return None
             return await asyncio.to_thread(
-                index.query, 
-                vector=query_vec, 
-                top_k=top_k, 
-                namespace=namespace, 
+                index.query,
+                vector=query_vec,
+                top_k=top_k,
+                namespace=namespace,
+                filter=filter_payload,
                 include_metadata=True
             )
 
-        from rag.faiss_client import faiss_service
-
         tasks = [
-            _query_index(settings.PINECONE_INDEX_DISEASES, top_k=disease_top_k),
-            faiss_service.search(user_id, "user_docs", query, top_k=5),
-            faiss_service.search(user_id, "vitals_history", query, top_k=3)
+            _query_index(namespace=DISEASE_NAMESPACE, top_k=disease_top_k),
+            _query_index(
+                namespace=USER_DOCS_NAMESPACE,
+                top_k=user_docs_top_k,
+                filter_payload={"user_id": {"$eq": user_id}},
+            ),
+            _query_index(
+                namespace=USER_VITALS_NAMESPACE,
+                top_k=vitals_top_k,
+                filter_payload={"user_id": {"$eq": user_id}},
+            ),
         ]
-        
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        pinecone_disease, doc_results, vitals_results = results
+        disease_results, doc_results, vitals_results = results
 
         def get_pinecone_text(res):
             if isinstance(res, Exception) or not res:
                 return []
             return [m.metadata['text'] for m in res.matches if 'text' in m.metadata]
 
-        def get_faiss_text(res):
-            if isinstance(res, Exception) or not res:
-                return []
-            return res
-
         return {
-            "disease_context": get_pinecone_text(pinecone_disease),
-            "user_docs_context": get_faiss_text(doc_results),
-            "vitals_history_context": get_faiss_text(vitals_results)
+            "disease_context": get_pinecone_text(disease_results),
+            "user_docs_context": get_pinecone_text(doc_results),
+            "vitals_history_context": get_pinecone_text(vitals_results),
         }
 
 rag_service = RakshakRAG(settings.PINECONE_API_KEY)
