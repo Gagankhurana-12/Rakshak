@@ -6,10 +6,12 @@ import uuid
 class User(SQLModel, table=True):
     id: str = Field(primary_key=True)  # Google sub id or email
     email: str
+    password_hash: Optional[str] = None  # For simple login
     display_name: Optional[str] = None
     access_token: Optional[str] = None
     refresh_token: Optional[str] = None
     token_expiry: Optional[datetime] = None
+    is_google_connected: bool = Field(default=False)
     
     # Relationships
     vitals_summaries: List["VitalsDailySummary"] = Relationship(back_populates="user")

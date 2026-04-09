@@ -9,8 +9,9 @@ import base64
 import httpx
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional, List
 from urllib.parse import urlencode
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, Header
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -18,6 +19,7 @@ from dotenv import load_dotenv
 import asyncio
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from sqlalchemy.ext.asyncio import AsyncSession
 from db.database import init_db, get_session
 from db.models import User, UploadedDocument, UserVitals
 from sqlmodel import select
@@ -29,6 +31,52 @@ from services.document_service import document_service
 from services.llm_service import llm_service
 from rag.pinecone_client import rag_service
 
+import jwt
+from datetime import datetime, timedelta, timezone
+
+# JWT Configuration
+SECRET_KEY = os.getenv("JWT_SECRET", "rakshak_secret_key_demo")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+def create_access_token(data: dict) -> str:
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def create_refresh_token(data: dict) -> str:
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": expire, "refresh": True})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_token(token: str) -> dict | None:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except:
+        return None
+
+import bcrypt
+
+# Setup password hashing directly with bcrypt
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    name: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -37,10 +85,10 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Ensure vectors directory exists and DB is ready
-    print("🚀 Starting Rakshak Backend...")
+    print("Starting Rakshak Backend...")
     os.makedirs("vectors", exist_ok=True)
     await init_db()
-    print("✅ Web Server Ready (AI models will load on first query)")
+    print("Web Server Ready (AI models will load on first query)")
     yield
 
 
@@ -48,12 +96,7 @@ app = FastAPI(title="Rakshak — Google Fit API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ],
+    allow_origins=["*"],  # Permissive for hackathon demo stability
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -246,17 +289,111 @@ async def aggregate(data_type_name: str, start_ms: int, end_ms: int,
 
 # ─── AUTH ROUTES ──────────────────────────────────────────────────────────────
 
+@app.post("/signup")
+async def signup(payload: SignupRequest, session: AsyncSession = Depends(get_session)):
+    """Classic Email/Password Signup with deep diagnostics."""
+    try:
+        # Check if user exists
+        statement = select(User).where(User.email == payload.email)
+        results = await session.execute(statement)
+        if results.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        user_id = payload.email
+        hashed_pw = hash_password(payload.password)
+        
+        new_user = User(
+            id=user_id,
+            email=payload.email,
+            display_name=payload.name or payload.email.split('@')[0],
+            password_hash=hashed_pw,
+            is_google_connected=False
+        )
+        session.add(new_user)
+        await session.commit()
+        
+        access_token = create_access_token({"sub": user_id})
+        refresh_token = create_refresh_token({"sub": user_id})
+        
+        token_store["user_id"] = user_id
+        return {
+            "status": "success", 
+            "user_id": user_id,
+            "access_token": access_token,
+            "refresh_token": refresh_token
+        }
+    except Exception as e:
+        import traceback
+        with open("debug_error.log", "w") as f:
+            f.write(f"ERROR: {str(e)}\n")
+            f.write(traceback.format_exc())
+        print(f"❌ SIGNUP CRASHED: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/login")
+async def login(payload: LoginRequest, session: AsyncSession = Depends(get_session)):
+    """Classic Email/Password Login."""
+    try:
+        statement = select(User).where(User.email == payload.email)
+        results = await session.execute(statement)
+        user = results.scalar_one_or_none()
+        
+        if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        access_token = create_access_token({"sub": user.id})
+        refresh_token = create_refresh_token({"sub": user.id})
+        
+        token_store["user_id"] = user.id
+        # Also preserve Google tokens in store if they exist in DB
+        if user.access_token:
+            token_store["access_token"] = user.access_token
+            token_store["refresh_token"] = user.refresh_token
+            token_store["token_expiry"] = user.token_expiry.timestamp() if user.token_expiry else None
+        
+        return {
+            "status": "success", 
+            "user_id": user.id, 
+            "is_google_connected": user.is_google_connected,
+            "access_token": access_token,
+            "refresh_token": refresh_token
+        }
+    except Exception as e:
+        import traceback
+        with open("debug_error.log", "w") as f:
+            f.write(f"ERROR_LOGIN: {str(e)}\n")
+            f.write(traceback.format_exc())
+        print(f"❌ LOGIN CRASHED: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/refresh")
+async def refresh_session(refresh_token: str):
+    """Issue a new access token using a valid refresh token."""
+    payload = decode_token(refresh_token)
+    if not payload or not payload.get("refresh"):
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    
+    user_id = payload.get("sub")
+    new_access = create_access_token({"sub": user_id})
+    return {"access_token": new_access}
+
 @app.get("/auth")
-def auth(next_url: str | None = None):
+def auth(next_url: str | None = None, link: bool = False, user_id: str | None = None):
     """Step 1 — redirect user to Google consent screen."""
+    # Pass user_id in state so we know who to link to on return
+    state_data = {
+        "next": next_url or os.getenv("FRONTEND_URL", "http://localhost:5173"),
+        "link": link,
+        "uid": user_id or token_store.get("user_id")
+    }
     params = urlencode({
         "client_id":     CLIENT_ID,
         "redirect_uri":  REDIRECT_URI,
         "response_type": "code",
         "scope":         SCOPES,
         "access_type":   "offline",
-        "prompt":        "consent",  # always return refresh_token
-        "state":         next_url or os.getenv("FRONTEND_URL", "http://localhost:5173"),
+        "prompt":        "consent",
+        "state":         json.dumps(state_data),
     })
     return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
 
@@ -269,6 +406,20 @@ async def exchange_token(code: str = None, error: str = None, state: str | None 
     if not code:
         return HTMLResponse("<p>No code received.</p>")
 
+    # Parse state
+    next_url = "http://localhost:5173"
+    is_linking = False
+    target_user_id = None
+    
+    if state:
+        try:
+            state_data = json.loads(state)
+            next_url = state_data.get("next", next_url)
+            is_linking = state_data.get("link", False)
+            target_user_id = state_data.get("uid")
+        except:
+            next_url = state
+
     async with httpx.AsyncClient() as client:
         resp = await client.post("https://oauth2.googleapis.com/token", data={
             "code":          code,
@@ -277,103 +428,73 @@ async def exchange_token(code: str = None, error: str = None, state: str | None 
             "redirect_uri":  REDIRECT_URI,
             "grant_type":    "authorization_code",
         })
-
-    if resp.status_code != 200:
-        return HTMLResponse(f"<p>Token exchange failed: {resp.text}</p>")
-
-    data = resp.json()
-    token_store["access_token"]  = data["access_token"]
-    token_store["refresh_token"] = data.get("refresh_token")
-    token_store["token_expiry"]  = time.time() + data["expires_in"]
-    token_store["user_id"]       = None
-
-    # --- SAVE USER ACCOUNT TO NEON DB ---
+        resp.raise_for_status()
+        data = resp.json()
+    
     try:
         user_info = _decode_jwt_payload(data.get("id_token", ""))
-        user_id = extract_google_user_id(user_info)
+        google_id = extract_google_user_id(user_info)
 
-        # Fallback for tokens issued without id_token payload.
-        if not user_id:
-            try:
-                async with httpx.AsyncClient() as client:
-                    user_info_resp = await client.get(
-                        "https://www.googleapis.com/oauth2/v2/userinfo",
-                        headers={"Authorization": f"Bearer {data['access_token']}"}
-                    )
-                    user_info_resp.raise_for_status()
-                    user_info = user_info_resp.json()
-                    user_id = extract_google_user_id(user_info)
-            except httpx.HTTPStatusError:
-                # Some consent screens may return fitness-only scopes, where /userinfo is unavailable.
-                # tokeninfo can still provide a stable user id for first-time account creation.
-                async with httpx.AsyncClient() as client:
-                    tokeninfo_resp = await client.get(
-                        "https://oauth2.googleapis.com/tokeninfo",
-                        params={"access_token": data["access_token"]},
-                    )
-                    tokeninfo_resp.raise_for_status()
-                    token_info = tokeninfo_resp.json()
-                    user_info = {
-                        "sub": token_info.get("sub") or token_info.get("user_id"),
-                        "email": token_info.get("email"),
-                        "name": token_info.get("email"),
-                    }
-                    user_id = extract_google_user_id(user_info)
+        if not google_id:
+            # Fallback for tokens issued without id_token payload
+            async with httpx.AsyncClient() as client:
+                user_info_resp = await client.get(
+                    "https://www.googleapis.com/oauth2/v2/userinfo",
+                    headers={"Authorization": f"Bearer {data['access_token']}"}
+                )
+                user_info_resp.raise_for_status()
+                user_info = user_info_resp.json()
+                google_id = extract_google_user_id(user_info)
 
-        if not user_id:
-            raise HTTPException(
-                status_code=401,
-                detail="Unable to identify Google user. Reconnect and allow profile/email access.",
-            )
+        email = user_info.get("email") or f"{google_id}@google.local"
+        display_name = user_info.get("name") or "Google User"
 
-        email = user_info.get("email") or f"{user_id}@google.local"
-        display_name = user_info.get("name") or user_info.get("given_name") or "Google User"
-        token_store["user_id"] = user_id
-            
-        print(f"🔍 Attempting to save user {email} to database...")
         from db.database import engine
         from sqlalchemy.ext.asyncio import AsyncSession
         
         async with AsyncSession(engine, expire_on_commit=False) as session:
-            # Check if user exists
-            statement = select(User).where(User.id == user_id)
-            results = await session.execute(statement)
-            user = results.scalar_one_or_none()
+            # Check if we should link to current session user
+            if not target_user_id:
+                target_user_id = token_store.get("user_id") if is_linking else None
+            
+            if target_user_id:
+                statement = select(User).where(User.id == target_user_id)
+            else:
+                statement = select(User).where(User.id == google_id)
+            
+            result = await session.execute(statement)
+            user = result.scalar_one_or_none()
             
             if not user:
-                print(f"🆕 Creating new user record for {email}")
+                # Create new Google user
                 user = User(
-                    id=user_id,
+                    id=google_id,
                     email=email,
                     display_name=display_name
                 )
             
-            # Update tokens
-            user.email = email
-            user.display_name = display_name
+            # Update tokens and status
             user.access_token = data["access_token"]
             user.refresh_token = data.get("refresh_token") or user.refresh_token
             user.token_expiry = datetime.fromtimestamp(time.time() + data["expires_in"], tz=timezone.utc).replace(tzinfo=None)
+            user.is_google_connected = True
             
             session.add(user)
             await session.commit()
-            print(f"✅ Account database record synced for: {user.email}")
             
-    except HTTPException:
-        raise
+            token_store["user_id"] = user.id
+            token_store["access_token"]  = user.access_token
+            token_store["refresh_token"] = user.refresh_token
+            
+            # AUTO-SYNC: Trigger initial sync in background
+            print(f"🔄 Auto-syncing vitals for {user.email}...")
+            asyncio.create_task(sync_service.sync_vitals(user, session, days=7))
+
     except Exception as e:
-        print(f"❌ DATABASE ERROR during login: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Login failed at database step: {str(e)}",
-        )
+        print(f"❌ AUTH ERROR: {e}")
+        return RedirectResponse(f"{next_url}?status=error&message={str(e)}")
 
-    print("✅ Tokens received. Redirecting to dashboard...")
-
-    frontend_redirect = state or os.getenv("FRONTEND_URL", "http://localhost:5173")
-    return RedirectResponse(f"{frontend_redirect}?status=success")
+    return RedirectResponse(f"{next_url}?status=success&connected=true&uid={user.id}")
 
 
 @app.get("/logout")
@@ -578,37 +699,52 @@ async def vitals_history(user_id: str, days: int = 7):
     }
 
 @app.get("/profile")
-async def profile():
+async def profile(user_id: str | None = None, authorization: str | None = Header(None)):
     """Confirms who is authenticated and returns user info from DB."""
     try:
-        await ensure_valid_token()
+        uid = user_id
+        
+        # 1. Priority: Try to get UID from JWT Header
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization.split(" ")[1]
+            payload = decode_token(token)
+            if payload:
+                uid = payload.get("sub")
+                print(f"✅ Authenticated via JWT: {uid}")
+
+        # 2. Fallback: Check global token store (for existing Google sessions)
+        if not uid:
+            uid = token_store.get("user_id")
+        
+        if not uid:
+             raise HTTPException(status_code=401, detail="No session found. Please login.")
+
         async for session in get_session():
-            user = None
-
-            if token_store.get("user_id"):
-                statement = select(User).where(User.id == token_store["user_id"])
-                user = (await session.execute(statement)).scalar_one_or_none()
-
-            if not user and token_store.get("refresh_token"):
-                statement = select(User).where(User.refresh_token == token_store["refresh_token"])
-                user = (await session.execute(statement)).scalar_one_or_none()
-
-            if not user and token_store.get("access_token"):
-                statement = select(User).where(User.access_token == token_store["access_token"])
-                user = (await session.execute(statement)).scalar_one_or_none()
+            statement = select(User).where(User.id == uid)
+            result = await session.execute(statement)
+            user = result.scalar_one_or_none()
 
             if user:
-                token_store["user_id"] = user.id
+                # Sync Google tokens to memory for this session
+                if user.access_token:
+                    token_store["access_token"] = user.access_token
+                    token_store["refresh_token"] = user.refresh_token
+                    token_store["user_id"] = user.id
+                    token_store["token_expiry"] = user.token_expiry.timestamp() if user.token_expiry else None
+
                 return {
                     "id": user.id,
                     "email": user.email,
                     "display_name": user.display_name,
+                    "is_google_connected": user.is_google_connected
                 }
-        raise HTTPException(status_code=401, detail="Google Fit is not connected")
+        
+        raise HTTPException(status_code=401, detail="User not found in database")
     except Exception as e:
         if isinstance(e, HTTPException):
             raise
-        raise HTTPException(status_code=401, detail="Google Fit is not connected")
+        print(f"❌ PROFILE ERROR: {e}")
+        raise HTTPException(status_code=401, detail=str(e))
 
 
 @app.get("/datasources")
@@ -920,25 +1056,4 @@ async def _fetch_sleep_sessions(t: dict) -> list:
 # ─── START ────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-
-    project_root = Path(__file__).resolve().parent.parent
-    venv_python = project_root / ".venv" / "Scripts" / "python.exe"
-
-    if venv_python.exists() and Path(sys.executable).resolve() != venv_python.resolve():
-        os.execv(
-            str(venv_python),
-            [
-                str(venv_python),
-                "-m",
-                "uvicorn",
-                "main:app",
-                "--app-dir",
-                str(Path(__file__).resolve().parent),
-                "--host",
-                "0.0.0.0",
-                "--port",
-                "8080",
-            ],
-        )
-
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

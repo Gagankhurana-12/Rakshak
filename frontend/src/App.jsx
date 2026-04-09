@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, FileText, Heart, LogOut, Shield, Moon, Zap, Sparkles } from 'lucide-react';
+import { Activity, FileText, Heart, LogOut, Shield, Moon, Zap, Sparkles, ArrowRight } from 'lucide-react';
 import AnalysisChat from './components/AnalysisChat';
 import DiagnosisPanel from './components/DiagnosisPanel';
 import DocumentUpload from './components/DocumentUpload';
 import VitalsCard from './components/VitalsCard';
 import VitalsTrend from './components/VitalsTrend';
-import api, { analyzeHealth, getUserDocuments, getVitalsHistory, syncVitals, uploadDocument } from './services/api';
+import AuthModal from './components/AuthModal';
 
 function App() {
   const [user, setUser] = useState(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [vitalsHistory, setVitalsHistory] = useState([]);
   const [documents, setDocuments] = useState([]);
@@ -62,24 +63,54 @@ function App() {
     }
   };
 
-  const checkUser = async () => {
+  const checkUser = async (forcedUser = null, tokens = null) => {
+    if (forcedUser) {
+      setUser(forcedUser);
+      localStorage.setItem('rakshak_user_id', forcedUser.id);
+      if (tokens) {
+        localStorage.setItem('rakshak_access_token', tokens.access);
+        localStorage.setItem('rakshak_refresh_token', tokens.refresh);
+      }
+      setShowAuthModal(false);
+      return;
+    }
+
+    const savedId = localStorage.getItem('rakshak_user_id');
+    if (!savedId) {
+      setUser(null);
+      setShowAuthModal(true);
+      setLoading((prev) => ({ ...prev, user: false }));
+      return;
+    }
+
     setLoading((prev) => ({ ...prev, user: true }));
     try {
-      const response = await api.get('/profile');
+      console.log('🔍 Checking user session for ID:', savedId);
+      const response = await api.get(`/profile?user_id=${savedId}`);
       if (!response.data?.id) {
-        throw new Error('Google Fit is not connected');
+        throw new Error('No user data returned');
       }
       setUser(response.data);
-      await Promise.all([
-        syncUserData(response.data.id),
-        fetchDocuments(response.data.id),
-      ]);
+      setShowAuthModal(false);
+
+      if (response.data.is_google_connected) {
+        await Promise.all([
+          syncUserData(response.data.id),
+          fetchDocuments(response.data.id),
+        ]).catch(err => console.error('⚠️ Sync error:', err));
+      } else {
+        await fetchDocuments(response.data.id).catch(err => console.error('⚠️ Doc fetch error:', err));
+      }
     } catch (error) {
-      setUser(null);
-      setAnalysis(null);
-      setVitalsHistory([]);
-      setDocuments([]);
-      setErrorMessage('Connect Google Fit to sync your personal vitals and unlock analysis.');
+      console.error('❌ Session check failed:', error.response?.data || error.message);
+      // Only clear session if it's a definitive 401 Unauthorized
+      if (error.response?.status === 401) {
+        setUser(null);
+        setShowAuthModal(true);
+        localStorage.removeItem('rakshak_user_id');
+        localStorage.removeItem('rakshak_access_token');
+        localStorage.removeItem('rakshak_refresh_token');
+      }
     } finally {
       setLoading((prev) => ({ ...prev, user: false }));
     }
@@ -87,7 +118,9 @@ function App() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('status') === 'success') {
+    const urlUid = params.get('uid');
+    if (urlUid) {
+      localStorage.setItem('rakshak_user_id', urlUid);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
     checkUser();
@@ -110,6 +143,9 @@ function App() {
       await api.get('/logout');
     } finally {
       setUser(null);
+      localStorage.removeItem('rakshak_user_id');
+      localStorage.removeItem('rakshak_access_token');
+      localStorage.removeItem('rakshak_refresh_token');
       setAnalysis(null);
       setVitalsHistory([]);
       setDocuments([]);
@@ -137,9 +173,9 @@ function App() {
     }
   };
 
-  const handleConnectGoogleFit = () => {
+  const handleConnectGoogleFit = (link = false) => {
     const nextUrl = encodeURIComponent(window.location.origin);
-    window.location.href = `http://localhost:8080/auth?next_url=${nextUrl}`;
+    window.location.href = `http://localhost:8000/auth?next_url=${nextUrl}${link ? '&link=true' : ''}`;
   };
 
   const handleUpload = async (file) => {
@@ -181,10 +217,27 @@ function App() {
     })
     : latestVitals?.date
       ? new Date(latestVitals.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    : 'Not synced yet';
+      : 'Not synced yet';
+
+  if (loading.user) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-950">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-12 w-12 animate-spin rounded-full border-4 border-cyan-500 border-t-transparent" />
+          <p className="text-slate-400 font-medium">Initializing Rakshak AI...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
+      {showAuthModal && !user && (
+        <AuthModal
+          onLoginSuccess={checkUser}
+          onGoogleConnect={() => handleConnectGoogleFit(false)}
+        />
+      )}
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.18),transparent_42%),radial-gradient(circle_at_80%_0%,rgba(59,130,246,0.18),transparent_35%),linear-gradient(180deg,rgba(2,6,23,1)_0%,rgba(3,7,18,1)_100%)]" />
       <div className="relative mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <nav className="sticky top-4 z-30 mb-8 rounded-3xl border border-slate-800/80 bg-slate-950/70 px-4 py-3 backdrop-blur-xl shadow-2xl shadow-slate-950/40">
@@ -234,9 +287,22 @@ function App() {
             <p className="max-w-2xl text-base leading-7 text-slate-400 sm:text-lg">
               Rakshak combines Google Fit, uploaded medical history, and retrieved medical knowledge to explain symptoms in your own context.
             </p>
-            {!user && (
-              <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-                Google Fit is not connected right now. Click Connect Google Fit and complete the OAuth flow to sync your personal data.
+            {user && !user.is_google_connected && (
+              <div className="group relative overflow-hidden rounded-3xl border border-cyan-400/20 bg-cyan-500/10 p-6 transition hover:bg-cyan-500/15">
+                <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="text-xl font-bold text-white">Unlock Full Analysis</h3>
+                    <p className="mt-1 text-sm text-cyan-200/70">Connect Google Fit to sync your personal vitals and enable baseline-aware AI diagnostics.</p>
+                  </div>
+                  <button
+                    onClick={() => handleConnectGoogleFit(true)}
+                    className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-500 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
+                  >
+                    Connect Google Fit
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-cyan-500/10 blur-2xl transition group-hover:bg-cyan-500/20" />
               </div>
             )}
           </div>
