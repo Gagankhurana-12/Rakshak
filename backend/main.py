@@ -125,7 +125,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-<<<<<<< HEAD
 @app.get("/health")
 async def health_check(request: Request):
     """Public health check endpoint useful for debugging production CORS/URLs"""
@@ -156,11 +155,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": f"Internal Server Error: {str(exc)}", "type": str(type(exc))}
     )
-=======
+
 @app.options("/{full_path:path}")
 async def options_handler(full_path: str):
     return Response(status_code=200)
->>>>>>> 30d1d93a1682553db2d4977c8a68fde5a0baf704
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 
