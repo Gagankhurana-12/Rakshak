@@ -1,4 +1,7 @@
-from groq import AsyncGroq
+try:
+    from groq import AsyncGroq
+except Exception:
+    AsyncGroq = None
 from config import settings
 import asyncio
 import json
@@ -16,6 +19,8 @@ class LLMService:
 
     @property
     def client(self):
+        if AsyncGroq is None:
+            raise RuntimeError("Groq SDK is not installed")
         if self._client is None:
             self._client = AsyncGroq(api_key=self.api_key)
         return self._client

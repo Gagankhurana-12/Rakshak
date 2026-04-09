@@ -11,6 +11,8 @@ pytesseract
 groq
 python-multipart
 pydantic-settings
+bcrypt
+PyJWT
 numpy
 torch # for sentence-transformers
 tf-keras

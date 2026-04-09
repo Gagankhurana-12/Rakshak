@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import asyncio
-if sys.platform == 'win32':
+if sys.platform == 'win32' and sys.version_info < (3, 14):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from sqlalchemy.ext.asyncio import AsyncSession
 from db.database import init_db, get_session
@@ -86,6 +86,7 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Ensure vectors directory exists and DB is ready
     print("Starting Rakshak Backend...")
+    print(f"OAuth redirect URI: {REDIRECT_URI}")
     os.makedirs("vectors", exist_ok=True)
     await init_db()
     print("Web Server Ready (AI models will load on first query)")
@@ -106,7 +107,8 @@ app.add_middleware(
 
 CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-REDIRECT_URI  = os.getenv("REDIRECT_URI", "http://localhost:8080/exchange_token")
+raw_redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8000/exchange_token")
+REDIRECT_URI = "http://localhost:8000/exchange_token" if "localhost:8080" in raw_redirect_uri else raw_redirect_uri
 
 FIT_BASE = "https://www.googleapis.com/fitness/v1/users/me"
 
