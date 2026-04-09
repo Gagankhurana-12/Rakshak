@@ -119,10 +119,42 @@ if not cors_origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/health")
+async def health_check(request: Request):
+    """Public health check endpoint useful for debugging production CORS/URLs"""
+    return {
+        "status": "healthy",
+        "frontend_url_configured": frontend_url,
+        "cors_origins_configured": cors_origins,
+        "request_origin": request.headers.get("origin")
+    }
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    print(f"[{request.method}] {request.url.path} (Origin: {request.headers.get('origin')})")
+    try:
+        response = await call_next(request)
+        print(f" -> Status: {response.status_code}")
+        return response
+    except Exception as e:
+        print(f" -> EXCEPTION in middleware: {e}")
+        raise
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print(f"🌍 GLOBAL EXCEPTION CAUGHT: {exc}")
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal Server Error: {str(exc)}", "type": str(type(exc))}
+    )
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@ const AuthModal = ({
   onGoogleConnect,
   mode = "login",
   onModeChange,
+  initialError = "",
 }) => {
   const [isSignup, setIsSignup] = useState(mode === "signup");
   const [formData, setFormData] = useState({
@@ -14,13 +15,17 @@ const AuthModal = ({
     password: "",
     name: "",
   });
-  
+
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(initialError);
 
   useEffect(() => {
     setIsSignup(mode === "signup");
   }, [mode]);
+
+  useEffect(() => {
+    if (initialError) setError(initialError);
+  }, [initialError]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,7 +34,12 @@ const AuthModal = ({
 
     try {
       const endpoint = isSignup ? "/signup" : "/login";
+      console.log(`Sending authentication request to: ${API_BASE_URL}${endpoint}`);
+      console.log("Request Payload:", { ...formData, password: "[REDACTED]" });
+      
       const response = await api.post(endpoint, formData);
+      console.log("Authentication successful, response:", response.data);
+      
       if (response.data.status === "success") {
         onLoginSuccess(
           {
@@ -43,9 +53,19 @@ const AuthModal = ({
             refresh: response.data.refresh_token,
           },
         );
+      } else {
+        console.warn("Authentication failed, expected 'success' status:", response.data);
       }
     } catch (err) {
-      setError(err.response?.data?.detail || "Authentication failed");
+      console.error("AXIOS ERROR IN AUTH:", err);
+      console.error("Error Response Data:", err.response?.data);
+      console.error("Error Status:", err.response?.status);
+      console.error("Error Headers:", err.response?.headers);
+      
+      const errorMessage = err.response?.data?.detail 
+        || (err.message === "Network Error" ? "Network error - Backend might be unreachable or CORS policy blocked the request." : "Authentication failed");
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

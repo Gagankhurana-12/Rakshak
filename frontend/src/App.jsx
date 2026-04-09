@@ -163,7 +163,13 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlUid = params.get("uid");
-    if (urlUid) {
+    const errorMsg = params.get("message");
+    const status = params.get("status");
+
+    if (status === "error" && errorMsg) {
+      setErrorMessage(`OAuth Error: ${errorMsg}`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (urlUid) {
       localStorage.setItem("rakshak_user_id", urlUid);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
@@ -298,6 +304,7 @@ function App() {
       {showAuthModal && !user && (
         <AuthModal
           mode={authMode || "login"}
+          initialError={authMode ? errorMessage : ""}
           onModeChange={(mode) => navigate(`/${mode}`)}
           onLoginSuccess={checkUser}
           onGoogleConnect={() => handleConnectGoogleFit(false)}

@@ -6,6 +6,9 @@ if (!RAW_API_BASE_URL) {
 }
 export const API_BASE_URL = RAW_API_BASE_URL.replace(/\/$/, "");
 
+console.log("Environment API URL Check:", RAW_API_BASE_URL);
+console.log("Configured API Base URL:", API_BASE_URL);
+
 export const api = axios.create({
   baseURL: API_BASE_URL,
 });
