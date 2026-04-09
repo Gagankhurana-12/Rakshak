@@ -6,9 +6,11 @@ BASE_DIR = Path(__file__).resolve().parent
 class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str
     GOOGLE_CLIENT_SECRET: str
-    REDIRECT_URI: str = "http://localhost:8000/exchange_token"
+    REDIRECT_URI: str
+    FRONTEND_URL: str
+    CORS_ORIGINS: str
     
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/rakshak"
+    DATABASE_URL: str
     
     PINECONE_API_KEY: str
     PINECONE_INDEX_DISEASES: str = "diseases"

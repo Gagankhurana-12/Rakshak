@@ -96,8 +96,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Rakshak — Google Fit API", lifespan=lifespan)
 
-raw_cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173")
-cors_origins = [origin.strip() for origin in raw_cors_origins.split(",") if origin.strip()]
+def _required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+
+frontend_url = _required_env("FRONTEND_URL").rstrip("/")
+cors_origins_raw = _required_env("CORS_ORIGINS")
+cors_origins = [origin.strip().rstrip("/") for origin in cors_origins_raw.split(",") if origin.strip()]
+
+if not cors_origins:
+    raise RuntimeError("CORS_ORIGINS must include at least one origin")
 
 app.add_middleware(
     CORSMiddleware,
@@ -111,8 +122,7 @@ app.add_middleware(
 
 CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-raw_redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8000/exchange_token")
-REDIRECT_URI = "http://localhost:8000/exchange_token" if "localhost:8080" in raw_redirect_uri else raw_redirect_uri
+REDIRECT_URI = _required_env("REDIRECT_URI")
 
 FIT_BASE = "https://www.googleapis.com/fitness/v1/users/me"
 
@@ -388,7 +398,7 @@ def auth(next_url: str | None = None, link: bool = False, user_id: str | None = 
     """Step 1 — redirect user to Google consent screen."""
     # Pass user_id in state so we know who to link to on return
     state_data = {
-        "next": next_url or os.getenv("FRONTEND_URL", "http://localhost:5173"),
+        "next": (next_url.rstrip("/") if next_url else frontend_url),
         "link": link,
         "uid": user_id or token_store.get("user_id")
     }
@@ -413,7 +423,7 @@ async def exchange_token(code: str = None, error: str = None, state: str | None 
         return HTMLResponse("<p>No code received.</p>")
 
     # Parse state
-    next_url = "http://localhost:5173"
+    next_url = frontend_url
     is_linking = False
     target_user_id = None
     

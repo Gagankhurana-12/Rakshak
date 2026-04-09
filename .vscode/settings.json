@@ -1,0 +1,5 @@
+{
+  "python.defaultInterpreterPath": "D:/Rakshak/.venv/Scripts/python.exe",
+  "python.analysis.extraPaths": ["./backend"],
+  "python.envFile": "${workspaceFolder}/backend/.env"
+}
