@@ -1116,13 +1116,15 @@ if __name__ == "__main__":
     import uvicorn
 
     host = "0.0.0.0"
-    port = 8000
+    port = int(os.getenv("PORT", "8000"))
+    is_render = os.getenv("RENDER", "").lower() == "true"
 
     # Avoid Windows bind errors when a previous backend instance is already running.
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.5)
-        if sock.connect_ex(("127.0.0.1", port)) == 0:
-            print(f"Rakshak backend already running on http://127.0.0.1:{port}")
-            sys.exit(0)
+    if not is_render:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            if sock.connect_ex(("127.0.0.1", port)) == 0:
+                print(f"Rakshak backend already running on http://127.0.0.1:{port}")
+                sys.exit(0)
 
     uvicorn.run("main:app", host=host, port=port, reload=False)
