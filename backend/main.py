@@ -89,7 +89,13 @@ async def lifespan(app: FastAPI):
     print("Starting Rakshak Backend...")
     print(f"OAuth redirect URI: {REDIRECT_URI}")
     os.makedirs("vectors", exist_ok=True)
-    await init_db()
+    db_startup_timeout = float(os.getenv("DB_STARTUP_TIMEOUT_SECONDS", "12"))
+    try:
+        await asyncio.wait_for(init_db(), timeout=db_startup_timeout)
+        print("✅ Database initialized")
+    except Exception as exc:
+        # Keep API process alive even if DB is temporarily unreachable on cold start.
+        print(f"⚠️ Database init skipped at startup: {exc}")
     print("Web Server Ready (AI models will load on first query)")
     yield
 
