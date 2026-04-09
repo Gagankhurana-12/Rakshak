@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 from urllib.parse import urlencode
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, Header
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends, Header, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -123,6 +123,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    return Response(status_code=200)
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 
