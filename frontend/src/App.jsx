@@ -18,6 +18,7 @@ import VitalsCard from "./components/VitalsCard";
 import VitalsTrend from "./components/VitalsTrend";
 import AuthModal from "./components/AuthModal";
 import api, {
+  API_BASE_URL,
   analyzeHealth,
   getUserDocuments,
   getVitalsHistory,
@@ -229,7 +230,7 @@ function App() {
 
   const handleConnectGoogleFit = (link = false) => {
     const nextUrl = encodeURIComponent(window.location.origin);
-    window.location.href = `http://localhost:8000/auth?next_url=${nextUrl}${link ? "&link=true" : ""}`;
+    window.location.href = `${API_BASE_URL}/auth?next_url=${nextUrl}${link ? "&link=true" : ""}`;
   };
 
   const handleUpload = async (file) => {

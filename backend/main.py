@@ -96,9 +96,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Rakshak — Google Fit API", lifespan=lifespan)
 
+raw_cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173")
+cors_origins = [origin.strip() for origin in raw_cors_origins.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permissive for hackathon demo stability
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -6,7 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent
 class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str
     GOOGLE_CLIENT_SECRET: str
-    REDIRECT_URI: str = "http://localhost:8080/exchange_token"
+    REDIRECT_URI: str = "http://localhost:8000/exchange_token"
     
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/rakshak"
     
