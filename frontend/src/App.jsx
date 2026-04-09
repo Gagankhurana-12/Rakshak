@@ -90,6 +90,20 @@ function App() {
     }
   };
 
+  const hydrateUserDataInBackground = (profile) => {
+    if (!profile?.id) {
+      return;
+    }
+
+    const tasks = profile.is_google_connected
+      ? [syncUserData(profile.id), fetchDocuments(profile.id)]
+      : [fetchDocuments(profile.id)];
+
+    Promise.allSettled(tasks).catch((error) => {
+      console.warn("Background hydration failed", error);
+    });
+  };
+
   const checkUser = async (forcedUser = null, tokens = null) => {
     if (forcedUser) {
       setUser(forcedUser);
@@ -99,6 +113,7 @@ function App() {
         localStorage.setItem("rakshak_refresh_token", tokens.refresh);
       }
       navigate("/", { replace: true });
+      hydrateUserDataInBackground(forcedUser);
       return;
     }
 
@@ -122,16 +137,8 @@ function App() {
         navigate("/", { replace: true });
       }
 
-      if (response.data.is_google_connected) {
-        await Promise.all([
-          syncUserData(response.data.id),
-          fetchDocuments(response.data.id),
-        ]).catch((err) => console.error("⚠️ Sync error:", err));
-      } else {
-        await fetchDocuments(response.data.id).catch((err) =>
-          console.error("⚠️ Doc fetch error:", err),
-        );
-      }
+      // Fast-start mode: paint dashboard immediately, hydrate data in background.
+      hydrateUserDataInBackground(response.data);
     } catch (error) {
       console.error(
         "❌ Session check failed:",
@@ -178,20 +185,22 @@ function App() {
   }, [user?.id]);
 
   const handleLogout = async () => {
-    try {
-      await api.get("/logout");
-    } finally {
-      setUser(null);
-      localStorage.removeItem("rakshak_user_id");
-      localStorage.removeItem("rakshak_access_token");
-      localStorage.removeItem("rakshak_refresh_token");
-      setAnalysis(null);
-      setVitalsHistory([]);
-      setDocuments([]);
-      setLastSyncedAt(null);
-      setErrorMessage("");
-      navigate("/login", { replace: true });
-    }
+    // Fast local logout first for instant UI response.
+    setUser(null);
+    localStorage.removeItem("rakshak_user_id");
+    localStorage.removeItem("rakshak_access_token");
+    localStorage.removeItem("rakshak_refresh_token");
+    setAnalysis(null);
+    setVitalsHistory([]);
+    setDocuments([]);
+    setLastSyncedAt(null);
+    setErrorMessage("");
+    navigate("/login", { replace: true });
+
+    // Best-effort server logout in background.
+    api.get("/logout").catch((error) => {
+      console.warn("Logout API call failed", error);
+    });
   };
 
   const handleAnalyze = async (query) => {

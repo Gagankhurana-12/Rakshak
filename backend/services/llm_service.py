@@ -26,7 +26,22 @@ class LLMService:
             self._client = AsyncGroq(api_key=self.api_key)
         return self._client
 
-    async def _call_model(self, prompt: str, system_prompt: str, timeout: float = 12.0) -> dict | None:
+    @staticmethod
+    def _clamp_temperature(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    def _resolve_temperature(self, mode: str) -> float:
+        if mode == "general":
+            return self._clamp_temperature(settings.LLM_TEMPERATURE_GENERAL)
+        return self._clamp_temperature(settings.LLM_TEMPERATURE_PERSONALIZED)
+
+    async def _call_model(
+        self,
+        prompt: str,
+        system_prompt: str,
+        temperature: float,
+        timeout: float,
+    ) -> dict | None:
         for model_name in dict.fromkeys(self.model_candidates):
             try:
                 completion = await asyncio.wait_for(
@@ -36,6 +51,9 @@ class LLMService:
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": prompt},
                         ],
+                        temperature=temperature,
+                        top_p=0.9,
+                        max_completion_tokens=settings.LLM_MAX_TOKENS,
                         response_format={"type": "json_object"},
                     ),
                     timeout=timeout,
@@ -51,6 +69,7 @@ class LLMService:
         disease_context = "\n".join(rag_context.get("disease_context", []))[:1000]
         user_docs_context = "\n".join(rag_context.get("user_docs_context", []))[:1000]
         vitals_history_context = "\n".join(rag_context.get("vitals_history_context", []))[:800]
+        temperature = self._resolve_temperature(mode)
 
         if mode == "general":
             system_prompt = """
@@ -127,7 +146,12 @@ Strict JSON format:
 """
 
         try:
-            raw = await self._call_model(prompt, system_prompt)
+            raw = await self._call_model(
+                prompt,
+                system_prompt,
+                temperature=temperature,
+                timeout=settings.LLM_TIMEOUT_SECONDS,
+            )
         except Exception:
             raw = None
 

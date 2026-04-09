@@ -20,6 +20,7 @@ import asyncio
 if sys.platform == 'win32' and sys.version_info < (3, 14):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 from db.database import init_db, get_session
 from db.models import User, UploadedDocument, UserVitals
 from sqlmodel import select
@@ -500,27 +501,49 @@ async def exchange_token(code: str = None, error: str = None, state: str | None 
 
 
 @app.get("/logout")
-async def logout():
-    """Clear the session tokens from memory and DB."""
-    # 1. Clear memory
+async def logout(authorization: str | None = Header(None)):
+    """Clear active session tokens from memory and current user DB row."""
+    previous_user_id = token_store.get("user_id")
+    previous_refresh_token = token_store.get("refresh_token")
+
+    # For email/password sessions, derive user id from JWT if available.
+    if authorization and authorization.startswith("Bearer "):
+        payload = decode_token(authorization.split(" ", 1)[1])
+        if payload and payload.get("sub"):
+            previous_user_id = payload.get("sub")
+
+    # 1. Clear in-memory session state immediately.
     token_store["access_token"] = None
     token_store["refresh_token"] = None
     token_store["token_expiry"] = None
     token_store["user_id"] = None
 
-    # 2. Clear tokens from DB (assuming the user is already found or just clear all for demo)
+    # 2. Clear tokens for only the active user record.
+    if not previous_user_id and not previous_refresh_token:
+        return {"status": "logged_out"}
+
     async for session in get_session():
-        statement = select(User)
-        result = await session.execute(statement)
-        users = result.scalars().all()
-        for u in users:
-            u.access_token = None
-            u.refresh_token = None
-            u.token_expiry = None
-            session.add(u)
-        await session.commit()
+        user = None
+        if previous_user_id:
+            user = (
+                await session.execute(select(User).where(User.id == previous_user_id))
+            ).scalar_one_or_none()
+
+        if not user and previous_refresh_token:
+            user = (
+                await session.execute(
+                    select(User).where(User.refresh_token == previous_refresh_token)
+                )
+            ).scalar_one_or_none()
+
+        if user:
+            user.access_token = None
+            user.refresh_token = None
+            user.token_expiry = None
+            session.add(user)
+            await session.commit()
         break
-        
+
     return {"status": "logged_out"}
 
 
@@ -658,17 +681,26 @@ async def analyze(payload: AnalyzeRequest):
 
 @app.post("/sync-vitals")
 async def sync_vitals(user_id: str, days: int = 7):
-    async for session in get_session():
-        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+    try:
+        async for session in get_session():
+            user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
 
-        synced_days = await sync_service.sync_vitals(user, session, days=days)
-        return {
-            "user_id": user_id,
-            "synced_days": synced_days,
-            "synced_at": datetime.now(timezone.utc).isoformat(),
-        }
+            synced_days = await sync_service.sync_vitals(user, session, days=days)
+            return {
+                "user_id": user_id,
+                "synced_days": synced_days,
+                "synced_at": datetime.now(timezone.utc).isoformat(),
+            }
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, OSError) as exc:
+        print(f"❌ DB sync error: {exc}")
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Please retry sync in a few seconds.",
+        ) from exc
 
 
 @app.get("/vitals/history")
@@ -1057,5 +1089,17 @@ async def _fetch_sleep_sessions(t: dict) -> list:
 
 # ─── START ────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import socket
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    host = "0.0.0.0"
+    port = 8000
+
+    # Avoid Windows bind errors when a previous backend instance is already running.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        if sock.connect_ex(("127.0.0.1", port)) == 0:
+            print(f"Rakshak backend already running on http://127.0.0.1:{port}")
+            sys.exit(0)
+
+    uvicorn.run("main:app", host=host, port=port, reload=False)
