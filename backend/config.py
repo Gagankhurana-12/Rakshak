@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "llama-3.3-70b-versatile"
     LLM_TEMPERATURE_PERSONALIZED: float = 0.1
     LLM_TEMPERATURE_GENERAL: float = 0.2
-    LLM_TIMEOUT_SECONDS: float = 8.0
+    LLM_TIMEOUT_SECONDS: float = 25.0
     LLM_MAX_TOKENS: int = 450
 
     ANALYZE_CACHE_TTL_SECONDS: int = 45
