@@ -161,20 +161,9 @@ class SyncService:
 
         await db_session.commit()
 
-        # Store per-day vitals summaries for semantic retrieval in Pinecone user_vitals namespace.
-        for s in summaries.values():
-            date_str = s.date.strftime("%Y-%m-%d")
-            summary_text = (
-                f"Vitals for {date_str}: "
-                f"steps={int(s.avg_steps or 0)}, "
-                f"avg_heart_rate={round(s.avg_hr, 2) if s.avg_hr is not None else 'N/A'} bpm, "
-                f"sleep_hours={round(s.avg_sleep_hours, 2) if s.avg_sleep_hours is not None else 'N/A'}, "
-                f"calories={round(s.total_calories, 2) if s.total_calories is not None else 'N/A'}."
-            )
-            try:
-                await rag_service.upsert_vitals_summary(user.id, summary_text, date_str)
-            except Exception as exc:
-                print(f"⚠️ Pinecone vitals upsert failed for {date_str}: {exc}")
+        # Temporarily disabled Pinecone user_vitals vector storage to massively speed up syncing
+        # Real-time data remains actively fetched during "Ask Rakshak"
+        # for s in summaries.values(): ...
 
         return len(summaries)
 

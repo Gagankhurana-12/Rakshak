@@ -150,15 +150,10 @@ class RakshakRAG:
                 top_k=user_docs_top_k,
                 filter_payload={"user_id": {"$eq": user_id}},
             ),
-            _query_index(
-                namespace=USER_VITALS_NAMESPACE,
-                top_k=vitals_top_k,
-                filter_payload={"user_id": {"$eq": user_id}},
-            ),
         ]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        disease_results, doc_results, vitals_results = results
+        disease_results, doc_results = results
 
         def get_pinecone_text(res):
             if isinstance(res, Exception) or not res:
@@ -168,7 +163,7 @@ class RakshakRAG:
         return {
             "disease_context": get_pinecone_text(disease_results),
             "user_docs_context": get_pinecone_text(doc_results),
-            "vitals_history_context": get_pinecone_text(vitals_results),
+            "vitals_history_context": [],
         }
 
 rag_service = RakshakRAG(settings.PINECONE_API_KEY)
