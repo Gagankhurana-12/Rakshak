@@ -156,10 +156,6 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": f"Internal Server Error: {str(exc)}", "type": str(type(exc))}
     )
 
-@app.options("/{full_path:path}")
-async def options_handler(full_path: str):
-    return Response(status_code=200)
-
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 
 CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
