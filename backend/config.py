@@ -18,11 +18,11 @@ class Settings(BaseSettings):
     PINECONE_INDEX_USER_VITALS: str = "user-vitals-history"
     
     GROQ_API_KEY: str
-    LLM_MODEL: str = "llama-3.3-70b-versatile"
-    LLM_TEMPERATURE_PERSONALIZED: float = 0.1
-    LLM_TEMPERATURE_GENERAL: float = 0.2
+    LLM_MODEL: str = "llama-3.1-8b-instant"
+    LLM_TEMPERATURE_PERSONALIZED: float = 0.0
+    LLM_TEMPERATURE_GENERAL: float = 0.0
     LLM_TIMEOUT_SECONDS: float = 25.0
-    LLM_MAX_TOKENS: int = 450
+    LLM_MAX_TOKENS: int = 400
 
     ANALYZE_CACHE_TTL_SECONDS: int = 45
     ANALYZE_CACHE_SIZE: int = 128
