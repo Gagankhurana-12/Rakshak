@@ -118,7 +118,10 @@ class AnalyzeService:
         vitals_context = vitals_bundle.get("summary") or "No personal vitals were used for this query."
 
         try:
-            rag_context = await rag_task
+            # Optimize: Add a strict 5-second timeout to Pinecone/RAG so it never hangs the main request
+            rag_context = await asyncio.wait_for(rag_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            print("⚠️ RAG context fetch timed out, falling back to LLM general knowledge")
         except Exception as exc:
             print(f"⚠️ Could not fetch RAG context for analysis: {exc}")
 

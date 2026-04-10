@@ -27,13 +27,16 @@ class Embedder:
             self.model.to("cuda")
 
     async def encode(self, text: str) -> list[float]:
-        self._ensure_model()
+        if self.model is None:
+            # Load model in a background thread so we don't block the FastAPI async event loop
+            await asyncio.to_thread(self._ensure_model)
         # SentenceTransformer.encode is CPU/GPU intensive and blocking, run in thread
         embedding = await asyncio.to_thread(self.model.encode, text)
         return embedding.tolist()
 
     async def encode_batch(self, texts: list[str]) -> list[list[float]]:
-        self._ensure_model()
+        if self.model is None:
+            await asyncio.to_thread(self._ensure_model)
         embeddings = await asyncio.to_thread(self.model.encode, texts)
         return embeddings.tolist()
 
