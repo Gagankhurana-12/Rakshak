@@ -53,7 +53,7 @@ class LLMService:
                         ],
                         temperature=temperature,
                         top_p=0.9,
-                        max_completion_tokens=settings.LLM_MAX_TOKENS,
+                        max_tokens=settings.LLM_MAX_TOKENS,
                         response_format={"type": "json_object"},
                     ),
                     timeout=timeout,
